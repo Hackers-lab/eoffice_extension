@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "eOffice Activity Helper",
+  "version": "2.1.0",
+  "description": "Keeps your eOffice session active by periodically sending a lightweight background heartbeat to the eOffice server, preventing idle logout without page reloads.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://eoffice.wbsedcl.in/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://eoffice.wbsedcl.in/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "eOffice Activity Helper",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}

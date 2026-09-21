@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>eOffice Activity Helper — Settings</title></head>
+<body style="font-family:Arial,sans-serif;max-width:650px;margin:40px auto;padding:20px;line-height:1.5">
+<h2>eOffice Activity Helper</h2>
+<p>
+  This extension prevents idle-timeout logouts on eOffice by sending periodic,
+  lightweight background heartbeats to <code>/efile-api/date</code>. It uses your
+  existing session cookies, never accesses credentials or forms, and never reloads
+  or navigates the page.
+</p>
+
+<label><input id="enabled" type="checkbox"> <b>Enabled (Start Keep-Alive)</b></label>
+<br><br>
+<label>Heartbeat Interval:
+<select id="interval">
+  <option value="1">1 minute</option>
+  <option value="3">3 minutes</option>
+  <option value="5">5 minutes (Recommended)</option>
+  <option value="10">10 minutes</option>
+  <option value="15">15 minutes</option>
+  <option value="30">30 minutes</option>
+</select>
+</label>
+<br><br>
+<label><input id="serverPing" type="checkbox"> <b>Send server keep-alive ping</b> (Hits <code>/efile-api/date</code> to refresh server session)</label>
+<br><br>
+<label><input id="subtleActivity" type="checkbox"> <b>Simulate mouse/scroll activity</b> (Harmless synthetic DOM events)</label>
+<br><br>
+<button id="save" style="padding:8px 18px;font-size:14px;cursor:pointer">Save Settings</button><span id="status" style="margin-left:10px;font-weight:bold;color:#16a34a"></span>
+
+<p style="font-size:12px;color:#666;margin-top:30px">
+  <b>Tip:</b> If Chrome or Edge puts background tabs to sleep to save RAM ("Memory Saver" / "Sleeping tabs"),
+  add <code>eoffice.wbsedcl.in</code> to your browser's "Always keep these sites active" list under <b>Settings → Performance</b>.
+</p>
+
+<script>
+(async () => {
+  const res = await chrome.runtime.sendMessage({type: "getStatus"});
+  enabled.checked = res.settings.enabled;
+  interval.value = String(res.settings.interval);
+  serverPing.checked = res.settings.serverPing !== false;
+  subtleActivity.checked = res.settings.subtleActivity !== false;
+})();
+save.onclick = async () => {
+  await chrome.runtime.sendMessage({
+    type: "setSettings",
+    enabled: enabled.checked,
+    interval: Number(interval.value),
+    serverPing: serverPing.checked,
+    subtleActivity: subtleActivity.checked
+  });
+  status.textContent = "Saved!";
+  setTimeout(() => { status.textContent = ""; }, 2500);
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Ignore sensitive HAR files and archives
+*.har
+*.log
+*.zip
+.DS_Store
+Thumbs.db

@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "eOffice CAPTCHA Auto Fill",
+  "version": "1.0",
+  "description": "Automatically fills the visible eOffice CAPTCHA.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://eoffice.wbsedcl.in/SSOComponent/gate.php*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
