@@ -34,6 +34,7 @@ function renderLogs(logs) {
     const isOk = item.ok;
     const tagClass = isOk ? "ok" : (item.status === "NO_TAB" ? "warn" : "err");
     const statusText = item.status === 200 ? "200 OK" : String(item.status || "ERR");
+    const portalPrefix = item.portal ? `<span style="color:#38bdf8;font-weight:600;">[${item.portal}]</span> ` : "";
 
     let detail = "";
     if (item.serverTime) detail += ` • ${item.serverTime}`;
@@ -46,7 +47,7 @@ function renderLogs(logs) {
         <span class="log-time">${item.time}</span>
         <span class="log-tag ${tagClass}">[${statusText}]</span>
         <span class="log-src">(${item.source})</span>
-        <span>${detail}</span>
+        <span>${portalPrefix}${detail}</span>
       </div>`;
   }
 
@@ -105,27 +106,40 @@ async function refreshStatus() {
     statusEl.innerHTML = `
       <div class="status-line">
         <span class="dot warn"></span>
-        <span><b>No eOffice tab open.</b> Open eoffice.wbsedcl.in first.</span>
+        <span><b>No active tab open.</b> Open eoffice.wbsedcl.in or wbcrmap.wbsedcl.in:4443.</span>
       </div>`;
     return;
   }
 
   testPingBtn.disabled = false;
   const activeTab = tabs.find((t) => t.activeInWindow) || tabs[0];
-  const pageKind = activeTab.pageType === "login" ? "Login Gate" : "eFile Portal";
+  const eofficeCount = tabs.filter(t => t.portal === "eOffice").length;
+  const crmCount = tabs.filter(t => t.portal === "CRM").length;
+  const parts = [];
+  if (eofficeCount > 0) parts.push(`${eofficeCount} eOffice`);
+  if (crmCount > 0) parts.push(`${crmCount} CRM`);
+  const tabSummary = parts.length > 0 ? parts.join(", ") : `${tabs.length} tab(s)`;
+
+  let pageKind = "Portal";
+  if (activeTab.portal === "CRM") {
+    pageKind = activeTab.pageType === "crm_login" ? "CRM Login" : "CRM Portal";
+  } else {
+    pageKind = activeTab.pageType === "login" ? "eOffice Login" : "eFile Portal";
+  }
 
   let pingInfo = "No heartbeat sent yet.";
   let pingDot = "idle";
 
   if (settings.lastPingAt) {
     const details = settings.lastPingDetails || {};
+    const portalTag = details.portal ? `[${details.portal}] ` : "";
     if (settings.lastPingStatus === 200) {
       pingDot = "ok";
-      pingInfo = `Heartbeat: <b>200 OK</b> (${details.latencyMs ? details.latencyMs + "ms, " : ""}${fmtAgo(settings.lastPingAt)})<br>` +
-                 `Server time: <code>${details.serverTime || "OK"}</code>`;
+      pingInfo = `Heartbeat: ${portalTag}<b>200 OK</b> (${details.latencyMs ? details.latencyMs + "ms, " : ""}${fmtAgo(settings.lastPingAt)})<br>` +
+                 `Server: <code>${details.serverTime || "OK"}</code>`;
     } else {
       pingDot = "err";
-      pingInfo = `Heartbeat error (${settings.lastPingStatus || "Error"}, ${fmtAgo(settings.lastPingAt)})`;
+      pingInfo = `Heartbeat error: ${portalTag}(${settings.lastPingStatus || "Error"}, ${fmtAgo(settings.lastPingAt)})`;
     }
   }
 
@@ -136,7 +150,7 @@ async function refreshStatus() {
   statusEl.innerHTML = `
     <div class="status-line">
       <span class="dot ok"></span>
-      <span><b>${tabs.length} tab(s) detected</b> (${pageKind})</span>
+      <span><b>${tabSummary} detected</b> (Active: ${pageKind})</span>
     </div>
     <div class="status-line">
       <span class="dot ${pingDot}"></span>
@@ -295,11 +309,13 @@ document.getElementById("testPing").addEventListener("click", async () => {
     const res = await chrome.runtime.sendMessage({ type: "testPing" });
     if (res?.ok && res?.pingResult?.ok) {
       const p = res.pingResult;
+      const portalPrefix = p.portal ? `[${p.portal}] ` : "";
       testBox.className = "test-result success";
-      testBox.innerHTML = `✓ 200 OK (${p.latencyMs}ms) • Server: ${p.serverTime}`;
+      testBox.innerHTML = `✓ ${portalPrefix}200 OK (${p.latencyMs}ms) • ${p.serverTime}`;
     } else {
       testBox.className = "test-result error";
-      testBox.textContent = `✗ Ping failed: ${res?.pingResult?.status || res?.error || "Unknown error"}`;
+      const portalPrefix = res?.pingResult?.portal ? `[${res.pingResult.portal}] ` : "";
+      testBox.textContent = `✗ ${portalPrefix}Ping failed: ${res?.pingResult?.status || res?.error || "Unknown error"}`;
     }
   } catch (e) {
     testBox.className = "test-result error";

@@ -1,12 +1,15 @@
-// eOfficeGate — Background Service Worker (v1.3.0)
+// eOfficeGate — Background Service Worker (v1.4.0)
 const DEFAULT_INTERVAL = 3; // minutes
 const ALARM_NAME = "eofficeGateKeepAlive";
 const UPDATE_ALARM_NAME = "eofficeGateUpdateCheck";
-const MATCH_PATTERNS = ["https://eoffice.wbsedcl.in/*"];
+const MATCH_PATTERNS = [
+  "https://eoffice.wbsedcl.in/*",
+  "https://wbcrmap.wbsedcl.in:4443/*"
+];
 const DEFAULT_REPO = "Hackers-lab/eoffice_extension";
 const MAX_LOGS = 50;
 
-// In-memory tab status (tabId -> {visible, focused, pageType, url, updatedAt})
+// In-memory tab status (tabId -> {visible, focused, portal, pageType, url, updatedAt})
 const tabStatus = new Map();
 
 // Helper: Auto-inject content.js into tabs that lost their connection after extension reload
@@ -39,7 +42,8 @@ async function addLog(entry) {
       message: entry.message || "",
       serverTime: entry.serverTime || "",
       latencyMs: entry.latencyMs || 0,
-      endpoint: entry.endpoint || "/efile-api/date",
+      endpoint: entry.endpoint || (entry.portal === "CRM" ? "/OA_HTML/RF.jsp" : "/efile-api/date"),
+      portal: entry.portal || null,
       error: entry.error || null
     };
 
@@ -252,7 +256,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       ok: false,
       status: "NO_TAB",
       source: "Auto Alarm",
-      error: "No eOffice tab open. Open eoffice.wbsedcl.in in a tab."
+      error: "No active WBSEDCL tab open. Open eOffice or CRM in a tab."
     });
     return;
   }
@@ -261,6 +265,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
   for (const tab of tabs) {
     if (!tab.id) continue;
+    const portalName = tab.url?.includes("wbcrmap.wbsedcl.in") ? "CRM" : "eOffice";
+
     try {
       let resp = null;
       try {
@@ -293,7 +299,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         await addLog({
           ok: p.ok,
           status: p.status,
-          source: `Tab #${tab.id}`,
+          source: `${portalName} Tab #${tab.id}`,
+          portal: portalName,
           serverTime: p.serverTime,
           latencyMs: p.latencyMs,
           endpoint: p.endpoint,
@@ -304,8 +311,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       await addLog({
         ok: false,
         status: "DISCONNECTED",
-        source: `Tab #${tab.id}`,
-        error: "Tab is sleeping or disconnected. Please refresh the eOffice tab."
+        source: `${portalName} Tab #${tab.id}`,
+        portal: portalName,
+        error: `${portalName} tab is sleeping or disconnected. Please refresh the page.`
       });
     }
   }
@@ -315,7 +323,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       ok: false,
       status: "NO_REPLY",
       source: "Auto Alarm",
-      error: "Tabs did not respond to keep-alive. Please refresh your eOffice tab."
+      error: "Tabs did not respond to keep-alive. Please refresh your WBSEDCL tabs."
     });
   }
 });
@@ -329,6 +337,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       tabStatus.set(sender.tab.id, {
         visible: !!message.visible,
         focused: !!message.focused,
+        portal: message.portal || (sender.tab.url?.includes("wbcrmap") ? "CRM" : "eOffice"),
         pageType: message.pageType || "portal",
         url: message.url || "",
         updatedAt: Date.now()
@@ -344,6 +353,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ok: p.ok,
       status: p.status,
       source: message.source || "Tab Timer",
+      portal: p.portal || null,
       serverTime: p.serverTime,
       latencyMs: p.latencyMs,
       endpoint: p.endpoint,
@@ -402,12 +412,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const tabs = await chrome.tabs.query({ url: MATCH_PATTERNS });
       if (tabs.length === 0) {
-        await addLog({ ok: false, status: "NO_TAB", source: "Manual Test", error: "No eOffice tab open." });
-        sendResponse({ ok: false, error: "No eOffice tab detected. Open eoffice.wbsedcl.in first." });
+        await addLog({ ok: false, status: "NO_TAB", source: "Manual Test", error: "No eOffice or CRM tab open." });
+        sendResponse({ ok: false, error: "No eOffice or CRM tab detected. Open eoffice.wbsedcl.in or wbcrmap.wbsedcl.in:4443 first." });
         return;
       }
 
       const targetTab = tabs.find((t) => t.active) || tabs[0];
+      const portalName = targetTab.url?.includes("wbcrmap.wbsedcl.in") ? "CRM" : "eOffice";
 
       try {
         let resp = null;
@@ -439,7 +450,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await addLog({
             ok: p.ok,
             status: p.status,
-            source: "Manual Test",
+            source: `${portalName} Test`,
+            portal: portalName,
             serverTime: p.serverTime,
             latencyMs: p.latencyMs,
             endpoint: p.endpoint,
@@ -448,12 +460,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           sendResponse({ ok: true, pingResult: p });
         } else {
-          await addLog({ ok: false, status: "NO_REPLY", source: "Manual Test", error: "No response from tab." });
+          await addLog({ ok: false, status: "NO_REPLY", source: `${portalName} Test`, error: "No response from tab." });
           sendResponse({ ok: false, error: "No response from tab." });
         }
       } catch (err) {
-        await addLog({ ok: false, status: "ERR", source: "Manual Test", error: err.message });
-        sendResponse({ ok: false, error: "Failed to communicate with tab. Refresh eOffice page." });
+        await addLog({ ok: false, status: "ERR", source: `${portalName} Test`, error: err.message });
+        sendResponse({ ok: false, error: `Failed to communicate with ${portalName} tab. Refresh the page.` });
       }
     })();
     return true;
@@ -470,15 +482,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       const tabInfo = tabs.map((t) => {
         const s = t.id != null ? tabStatus.get(t.id) : undefined;
+        const isCrm = t.url?.includes("wbcrmap.wbsedcl.in");
         return {
           id: t.id,
           title: t.title,
           url: t.url,
+          portal: isCrm ? "CRM" : "eOffice",
           activeInWindow: !!t.active,
           discarded: !!t.discarded,
           visible: s ? s.visible : null,
           focused: s ? s.focused : null,
-          pageType: s ? s.pageType : "portal"
+          pageType: s ? s.pageType : (isCrm ? "crm_portal" : "portal")
         };
       });
 

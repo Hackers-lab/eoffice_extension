@@ -1,21 +1,26 @@
-// eOfficeGate — Content Script (v1.3.0)
-// 1. Automatic login CAPTCHA detection and auto-fill on SSO login gate
-// 2. Background session keep-alive heartbeats (/efile-api/date) with live logging
-// 3. In-page fallback timer & synthetic user activity to reset client-side idle watchers
+// eOfficeGate — Content Script (v1.4.0)
+// 1. Automatic login CAPTCHA detection and auto-fill on eOffice SSO login gate
+// 2. Background session keep-alive heartbeats:
+//    - eOffice (eoffice.wbsedcl.in): /efile-api/date
+//    - CRM (wbcrmap.wbsedcl.in:4443): Oracle EBS /OA_HTML/RF.jsp REST heartbeat
+// 3. In-page fallback timer & synthetic user activity to prevent idle logouts without page reloads
 
 (function () {
   function isAlive() {
     return typeof chrome !== "undefined" && !!chrome.runtime?.id;
   }
 
+  const isOracleCRM = window.location.hostname.includes("wbcrmap.wbsedcl.in");
+  const isEOffice = window.location.hostname.includes("eoffice.wbsedcl.in");
+
   // -------------------------------------------------------------
-  // Part 1: CAPTCHA Auto-Fill
+  // Part 1: CAPTCHA Auto-Fill (eOffice SSO gate only)
   // -------------------------------------------------------------
   let captchaObserver = null;
   let captchaInterval = null;
 
   function fillCaptcha() {
-    if (!isAlive()) return;
+    if (!isAlive() || !isEOffice) return;
     const captcha = document.getElementById("captcha");
     const input = document.getElementById("textBox");
 
@@ -33,7 +38,7 @@
   }
 
   function initCaptchaFiller() {
-    if (!isAlive()) return;
+    if (!isAlive() || !isEOffice) return;
     chrome.storage.local.get(["autoCaptcha"], (data) => {
       if (!isAlive() || chrome.runtime.lastError) return;
       const isEnabled = data?.autoCaptcha !== false; // default ON
@@ -71,15 +76,33 @@
     } catch (e) {}
   }
 
+  function getPageStatus() {
+    if (isOracleCRM) {
+      const isLogin = window.location.pathname.includes("AppsLocalLogin") ||
+                      window.location.pathname.includes("AppsLogin");
+      return {
+        portal: "CRM",
+        pageType: isLogin ? "crm_login" : "crm_portal"
+      };
+    }
+    const isLogin = !!(document.getElementById("captcha") && document.getElementById("textBox")) ||
+                    window.location.pathname.includes("gate.php");
+    return {
+      portal: "eOffice",
+      pageType: isLogin ? "login" : "portal"
+    };
+  }
+
   function reportStatus() {
     if (!isAlive()) return;
-    const isLogin = !!(document.getElementById("captcha") && document.getElementById("textBox"));
+    const { portal, pageType } = getPageStatus();
     try {
       chrome.runtime.sendMessage({
         type: "status",
         visible: document.visibilityState === "visible",
         focused: document.hasFocus(),
-        pageType: isLogin ? "login" : "portal",
+        portal,
+        pageType,
         url: window.location.pathname
       }, () => {
         void chrome.runtime.lastError;
@@ -88,14 +111,101 @@
   }
 
   async function pingServer() {
+    // ---------------- CRM / Oracle EBS Keep-Alive ----------------
+    if (isOracleCRM) {
+      const isLogin = window.location.pathname.includes("AppsLocalLogin") ||
+                      window.location.pathname.includes("AppsLogin");
+      if (isLogin) {
+        return {
+          ok: true,
+          status: 200,
+          serverTime: "CRM Login Screen (No Session Needed)",
+          latencyMs: 0,
+          endpoint: "AppsLocalLogin.jsp",
+          portal: "CRM"
+        };
+      }
+
+      const t0 = performance.now();
+      try {
+        // Oracle EBS OAF REST heartbeat (stateless menu REST service that touches ICX_SESSIONS)
+        const res = await fetch("/OA_HTML/RF.jsp?function_id=MAINMENUREST&security_group_id=0", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/xml",
+            "Accept": "*/*"
+          },
+          body: "<params><param>RESPLIST</param><param>HOMEPAGE</param></params>"
+        });
+
+        const latencyMs = Math.round(performance.now() - t0);
+        const text = await res.text().catch(() => "");
+        const isSessionOk = res.ok && text.includes('status="200"');
+
+        simulateUserActivity();
+
+        const result = {
+          ok: isSessionOk,
+          status: res.status,
+          serverTime: isSessionOk ? "Oracle Session Active" : (text.includes("error") ? "Session Expired" : `HTTP ${res.status}`),
+          latencyMs,
+          endpoint: "/OA_HTML/RF.jsp",
+          portal: "CRM",
+          error: isSessionOk ? null : (res.status === 500 ? "Session expired on server (FND_SESSION_ICX_EXPIRED)" : `HTTP ${res.status}`)
+        };
+
+        if (isSessionOk) {
+          console.log("%c[eOfficeGate] 🟢 CRM Heartbeat Success:", "color: #16a34a; font-weight: bold;",
+            `${res.status} OK (${latencyMs}ms) | Oracle EBS Session Refreshed`);
+        } else {
+          console.warn("%c[eOfficeGate] 🔴 CRM Heartbeat Returned Failure:", "color: #dc2626; font-weight: bold;",
+            `HTTP ${res.status} | ${result.error}`);
+        }
+
+        return result;
+      } catch (err) {
+        // Fallback: HEAD request to current page if RF.jsp fails
+        try {
+          const fbRes = await fetch(window.location.href, {
+            method: "HEAD",
+            cache: "no-store",
+            credentials: "include"
+          });
+          const latencyMs = Math.round(performance.now() - t0);
+          simulateUserActivity();
+          return {
+            ok: fbRes.ok,
+            status: fbRes.status,
+            serverTime: new Date().toLocaleTimeString(),
+            latencyMs,
+            endpoint: window.location.pathname,
+            portal: "CRM"
+          };
+        } catch (fbErr) {
+          const latencyMs = Math.round(performance.now() - t0);
+          return {
+            ok: false,
+            status: 0,
+            error: err.message || "Network request failed",
+            latencyMs,
+            portal: "CRM"
+          };
+        }
+      }
+    }
+
+    // ---------------- eOffice Keep-Alive ----------------
     const isLogin = window.location.pathname.includes("gate.php") || document.getElementById("captcha");
     if (isLogin) {
       return {
         ok: true,
         status: 200,
-        serverTime: "Login Screen (No Session Needed)",
+        serverTime: "eOffice Login Screen (No Session Needed)",
         latencyMs: 0,
-        endpoint: "gate.php"
+        endpoint: "gate.php",
+        portal: "eOffice"
       };
     }
 
@@ -122,14 +232,15 @@
         status: res.status,
         serverTime: cleanText || (res.ok ? "200 OK" : `HTTP ${res.status}`),
         latencyMs,
-        endpoint: "/efile-api/date"
+        endpoint: "/efile-api/date",
+        portal: "eOffice"
       };
 
       if (res.ok) {
-        console.log("%c[eOfficeGate] 🟢 Heartbeat Success:", "color: #16a34a; font-weight: bold;",
+        console.log("%c[eOfficeGate] 🟢 eOffice Heartbeat Success:", "color: #16a34a; font-weight: bold;",
           `${res.status} OK (${latencyMs}ms) | Server Time: ${cleanText}`);
       } else {
-        console.warn("%c[eOfficeGate] 🔴 Heartbeat Returned Non-200:", "color: #dc2626; font-weight: bold;",
+        console.warn("%c[eOfficeGate] 🔴 eOffice Heartbeat Returned Non-200:", "color: #dc2626; font-weight: bold;",
           `HTTP ${res.status} | Response: ${cleanText}`);
       }
 
@@ -148,7 +259,8 @@
           status: fbRes.status,
           serverTime: new Date().toLocaleTimeString(),
           latencyMs,
-          endpoint: window.location.pathname
+          endpoint: window.location.pathname,
+          portal: "eOffice"
         };
         return result;
       } catch (fbErr) {
@@ -157,7 +269,8 @@
           ok: false,
           status: 0,
           error: err.message || "Network request failed",
-          latencyMs
+          latencyMs,
+          portal: "eOffice"
         };
         return result;
       }
@@ -172,8 +285,8 @@
   function setupInPageTimer() {
     if (inPageTimer) clearInterval(inPageTimer);
     inPageTimer = setInterval(async () => {
-      const isLogin = window.location.pathname.includes("gate.php") || document.getElementById("captcha");
-      if (isLogin) return;
+      const { pageType, portal } = getPageStatus();
+      if (pageType === "login" || pageType === "crm_login") return;
 
       if (isAlive()) {
         chrome.storage.local.get(["enabled", "serverPing"], async (data) => {
@@ -181,7 +294,7 @@
           const pingResult = await pingServer();
           chrome.runtime.sendMessage({
             type: "logPingResult",
-            source: "In-Page Auto Timer",
+            source: `${portal} Timer`,
             pingResult
           }, () => { void chrome.runtime.lastError; });
         });
@@ -213,16 +326,18 @@
     }
 
     if (message?.type === "applyCaptchaSetting") {
-      if (message.autoCaptcha) {
-        initCaptchaFiller();
-      } else {
-        if (captchaObserver) {
-          captchaObserver.disconnect();
-          captchaObserver = null;
-        }
-        if (captchaInterval) {
-          clearInterval(captchaInterval);
-          captchaInterval = null;
+      if (isEOffice) {
+        if (message.autoCaptcha) {
+          initCaptchaFiller();
+        } else {
+          if (captchaObserver) {
+            captchaObserver.disconnect();
+            captchaObserver = null;
+          }
+          if (captchaInterval) {
+            clearInterval(captchaInterval);
+            captchaInterval = null;
+          }
         }
       }
       sendResponse({ ok: true });
@@ -236,7 +351,9 @@
   window.addEventListener("focus", reportStatus);
   window.addEventListener("blur", reportStatus);
 
-  initCaptchaFiller();
+  if (isEOffice) {
+    initCaptchaFiller();
+  }
   reportStatus();
   setupInPageTimer();
 })();
