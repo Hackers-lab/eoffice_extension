@@ -5,8 +5,9 @@
 2. **Session Keep-Alive (Multi-Portal)**: Prevents inactivity timeout by periodically sending lightweight background heartbeats:
    - **eOffice** (`https://eoffice.wbsedcl.in`): `/efile-api/date` heartbeat.
    - **CRM** (`https://wbcrmap.wbsedcl.in:4443`): Oracle EBS `/OA_HTML/RF.jsp` REST heartbeat without reloading or navigating away from your active work.
-3. **Live Logger & Status**: Real-time multi-portal tab detector and detailed log viewer in the extension popup.
-4. **GitHub Auto-Update Checker & 1-Click Updater**: Automatically checks for new versions on GitHub and lets you update the unpacked extension directly from the browser or via `update.bat`.
+3. **Active Window Timer & Stopwatch**: Measures actual in-window focused time (pausing when minimized or switching to other apps), persists across page navigations in the tab, and optionally displays a sleek on-page floating timer pill.
+4. **Live Logger & Status**: Real-time multi-portal tab detector and detailed log viewer in the extension popup.
+5. **GitHub Auto-Update Checker & 1-Click Updater**: Automatically checks for new versions on GitHub and lets you update the unpacked extension directly from the browser or via `update.bat`.
 
 ---
 

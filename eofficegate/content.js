@@ -1,9 +1,13 @@
-// eOfficeGate — Content Script (v1.4.0)
+// eOfficeGate — Content Script (v1.5.0)
 // 1. Automatic login CAPTCHA detection and auto-fill on eOffice SSO login gate
 // 2. Background session keep-alive heartbeats:
 //    - eOffice (eoffice.wbsedcl.in): /efile-api/date
 //    - CRM (wbcrmap.wbsedcl.in:4443): Oracle EBS /OA_HTML/RF.jsp REST heartbeat
-// 3. In-page fallback timer & synthetic user activity to prevent idle logouts without page reloads
+// 3. Active Window Timer & Session Stopwatch:
+//    - Tracks real in-window focused active time (pauses when minimized / blurred)
+//    - Persists across page transitions within the tab via sessionStorage
+//    - Optional floating on-screen timer pill
+// 4. In-page fallback timer & synthetic user activity to prevent idle logouts
 
 (function () {
   function isAlive() {
@@ -14,7 +18,140 @@
   const isEOffice = window.location.hostname.includes("eoffice.wbsedcl.in");
 
   // -------------------------------------------------------------
-  // Part 1: CAPTCHA Auto-Fill (eOffice SSO gate only)
+  // Part 1: Active Window Time & Session Stopwatch
+  // -------------------------------------------------------------
+  const SS_KEY_START = "eofficegate_session_start";
+  const SS_KEY_ACTIVE = "eofficegate_active_ms";
+
+  let sessionStartTime = Number(sessionStorage.getItem(SS_KEY_START));
+  if (!sessionStartTime || isNaN(sessionStartTime)) {
+    sessionStartTime = Date.now();
+    try { sessionStorage.setItem(SS_KEY_START, String(sessionStartTime)); } catch (e) {}
+  }
+
+  let accumulatedActiveMs = Number(sessionStorage.getItem(SS_KEY_ACTIVE)) || 0;
+  let lastFocusStart = (document.hasFocus() && document.visibilityState === "visible") ? Date.now() : null;
+
+  function isWindowFocused() {
+    return document.hasFocus() && document.visibilityState === "visible";
+  }
+
+  function getActiveWindowTimeMs() {
+    let total = accumulatedActiveMs;
+    if (lastFocusStart && isWindowFocused()) {
+      total += (Date.now() - lastFocusStart);
+    }
+    return total;
+  }
+
+  function handleFocusGain() {
+    if (!lastFocusStart) {
+      lastFocusStart = Date.now();
+    }
+    updateFloatingBadge();
+    reportStatus();
+  }
+
+  function handleFocusLoss() {
+    if (lastFocusStart) {
+      accumulatedActiveMs += (Date.now() - lastFocusStart);
+      lastFocusStart = null;
+      try { sessionStorage.setItem(SS_KEY_ACTIVE, String(accumulatedActiveMs)); } catch (e) {}
+    }
+    updateFloatingBadge();
+    reportStatus();
+  }
+
+  function formatHms(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    if (h > 0) return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    return `${pad(m)}:${pad(s)}`;
+  }
+
+  // Floating On-Screen Badge Widget
+  let floatingBadgeEl = null;
+
+  function createFloatingBadge() {
+    if (floatingBadgeEl || !document.body) return;
+    const badge = document.createElement("div");
+    badge.id = "eofficegate-floating-timer";
+    badge.style.cssText = `
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      z-index: 2147483647;
+      background: rgba(15, 23, 42, 0.90);
+      color: #f8fafc;
+      padding: 5px 11px;
+      border-radius: 20px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.30);
+      border: 1px solid rgba(255,255,255,0.18);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    `;
+    badge.title = "eOfficeGate — Active Window Time (Click to collapse/expand)";
+    badge.innerHTML = `
+      <span style="font-size: 12px;">⏱️</span>
+      <span id="eofficegate-timer-text">Active: 00:00</span>
+      <span id="eofficegate-status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+    `;
+
+    badge.addEventListener("click", () => {
+      const textEl = badge.querySelector("#eofficegate-timer-text");
+      if (textEl.style.display === "none") {
+        textEl.style.display = "inline";
+      } else {
+        textEl.style.display = "none";
+      }
+    });
+
+    document.body.appendChild(badge);
+    floatingBadgeEl = badge;
+    updateFloatingBadge();
+  }
+
+  function updateFloatingBadge() {
+    if (!floatingBadgeEl) return;
+    const textEl = floatingBadgeEl.querySelector("#eofficegate-timer-text");
+    const dotEl = floatingBadgeEl.querySelector("#eofficegate-status-dot");
+    if (!textEl) return;
+
+    const activeMs = getActiveWindowTimeMs();
+    textEl.textContent = `Active: ${formatHms(activeMs)}`;
+    const focused = isWindowFocused();
+    if (dotEl) {
+      dotEl.style.background = focused ? "#22c55e" : "#f59e0b";
+      dotEl.title = focused ? "Window is focused & active" : "Window is in background";
+    }
+  }
+
+  function syncFloatingBadgeVisibility() {
+    if (!isAlive()) return;
+    chrome.storage.local.get(["showFloatingBadge"], (data) => {
+      const show = data?.showFloatingBadge !== false; // default ON
+      if (show) {
+        if (!floatingBadgeEl) createFloatingBadge();
+        if (floatingBadgeEl) floatingBadgeEl.style.display = "flex";
+      } else if (floatingBadgeEl) {
+        floatingBadgeEl.style.display = "none";
+      }
+    });
+  }
+
+  // -------------------------------------------------------------
+  // Part 2: CAPTCHA Auto-Fill (eOffice SSO gate only)
   // -------------------------------------------------------------
   let captchaObserver = null;
   let captchaInterval = null;
@@ -67,7 +204,7 @@
   }
 
   // -------------------------------------------------------------
-  // Part 2: Session Keep-Alive & Activity Simulation
+  // Part 3: Session Keep-Alive & Activity Simulation
   // -------------------------------------------------------------
   function simulateUserActivity() {
     try {
@@ -101,9 +238,12 @@
         type: "status",
         visible: document.visibilityState === "visible",
         focused: document.hasFocus(),
+        isFocused: isWindowFocused(),
         portal,
         pageType,
-        url: window.location.pathname
+        url: window.location.pathname,
+        sessionStartTime,
+        activeTimeMs: getActiveWindowTimeMs()
       }, () => {
         void chrome.runtime.lastError;
       });
@@ -128,7 +268,6 @@
 
       const t0 = performance.now();
       try {
-        // Oracle EBS OAF REST heartbeat (stateless menu REST service that touches ICX_SESSIONS)
         const res = await fetch("/OA_HTML/RF.jsp?function_id=MAINMENUREST&security_group_id=0", {
           method: "POST",
           cache: "no-store",
@@ -166,7 +305,6 @@
 
         return result;
       } catch (err) {
-        // Fallback: HEAD request to current page if RF.jsp fails
         try {
           const fbRes = await fetch(window.location.href, {
             method: "HEAD",
@@ -278,7 +416,7 @@
   }
 
   // -------------------------------------------------------------
-  // Part 3: In-Page Fallback Keep-Alive Interval
+  // Part 4: In-Page Fallback Keep-Alive Interval
   // -------------------------------------------------------------
   let inPageTimer = null;
 
@@ -303,7 +441,7 @@
   }
 
   // -------------------------------------------------------------
-  // Part 4: Message Handling
+  // Part 5: Message Handling
   // -------------------------------------------------------------
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!isAlive()) return false;
@@ -321,24 +459,26 @@
 
     if (message?.type === "requestStatus") {
       reportStatus();
-      sendResponse({ ok: true });
+      sendResponse({
+        ok: true,
+        sessionStartTime,
+        activeTimeMs: getActiveWindowTimeMs(),
+        isFocused: isWindowFocused()
+      });
       return false;
     }
 
-    if (message?.type === "applyCaptchaSetting") {
-      if (isEOffice) {
+    if (message?.type === "applySettings") {
+      if (isEOffice && message.autoCaptcha !== undefined) {
         if (message.autoCaptcha) {
           initCaptchaFiller();
         } else {
-          if (captchaObserver) {
-            captchaObserver.disconnect();
-            captchaObserver = null;
-          }
-          if (captchaInterval) {
-            clearInterval(captchaInterval);
-            captchaInterval = null;
-          }
+          if (captchaObserver) { captchaObserver.disconnect(); captchaObserver = null; }
+          if (captchaInterval) { clearInterval(captchaInterval); captchaInterval = null; }
         }
+      }
+      if (message.showFloatingBadge !== undefined) {
+        syncFloatingBadgeVisibility();
       }
       sendResponse({ ok: true });
       return false;
@@ -347,13 +487,32 @@
     return false;
   });
 
-  document.addEventListener("visibilitychange", reportStatus);
-  window.addEventListener("focus", reportStatus);
-  window.addEventListener("blur", reportStatus);
+  // Focus & Visibility Listeners for precise Active Window time
+  window.addEventListener("focus", handleFocusGain);
+  window.addEventListener("blur", handleFocusLoss);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      handleFocusGain();
+    } else {
+      handleFocusLoss();
+    }
+  });
+
+  // 1-second active timer ticker
+  setInterval(() => {
+    updateFloatingBadge();
+    // Persist to sessionStorage every 5 seconds
+    if (Math.floor(Date.now() / 1000) % 5 === 0) {
+      try {
+        sessionStorage.setItem(SS_KEY_ACTIVE, String(getActiveWindowTimeMs()));
+      } catch (e) {}
+    }
+  }, 1000);
 
   if (isEOffice) {
     initCaptchaFiller();
   }
+  syncFloatingBadgeVisibility();
   reportStatus();
   setupInPageTimer();
 })();

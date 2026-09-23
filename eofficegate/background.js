@@ -162,6 +162,7 @@ async function checkForUpdates(manual = false) {
 async function getSettings() {
   const data = await chrome.storage.local.get([
     "enabled", "interval", "autoCaptcha", "serverPing", "githubRepo",
+    "showWindowTimer", "showFloatingBadge",
     "lastPingAt", "lastPingStatus", "lastPingDetails"
   ]);
   return {
@@ -170,6 +171,8 @@ async function getSettings() {
     autoCaptcha: data.autoCaptcha !== false,
     serverPing: data.serverPing !== false,
     githubRepo: data.githubRepo || DEFAULT_REPO,
+    showWindowTimer: data.showWindowTimer !== false,   // default ON
+    showFloatingBadge: data.showFloatingBadge !== false, // default ON
     lastPingAt: data.lastPingAt || null,
     lastPingStatus: data.lastPingStatus || null,
     lastPingDetails: data.lastPingDetails || null
@@ -177,12 +180,17 @@ async function getSettings() {
 }
 
 async function ensureDefaults() {
-  const data = await chrome.storage.local.get(["enabled", "interval", "autoCaptcha", "serverPing", "githubRepo", "pingLogs"]);
+  const data = await chrome.storage.local.get([
+    "enabled", "interval", "autoCaptcha", "serverPing", "githubRepo", "pingLogs",
+    "showWindowTimer", "showFloatingBadge"
+  ]);
   const patch = {};
   if (data.enabled === undefined) patch.enabled = true;
   if (!data.interval) patch.interval = DEFAULT_INTERVAL;
   if (data.autoCaptcha === undefined) patch.autoCaptcha = true;
   if (data.serverPing === undefined) patch.serverPing = true;
+  if (data.showWindowTimer === undefined) patch.showWindowTimer = true;
+  if (data.showFloatingBadge === undefined) patch.showFloatingBadge = true;
   if (!data.githubRepo) patch.githubRepo = DEFAULT_REPO;
   if (!Array.isArray(data.pingLogs)) patch.pingLogs = [];
   if (Object.keys(patch).length) await chrome.storage.local.set(patch);
@@ -337,9 +345,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       tabStatus.set(sender.tab.id, {
         visible: !!message.visible,
         focused: !!message.focused,
+        isFocused: !!message.isFocused,
         portal: message.portal || (sender.tab.url?.includes("wbcrmap") ? "CRM" : "eOffice"),
         pageType: message.pageType || "portal",
         url: message.url || "",
+        sessionStartTime: message.sessionStartTime || Date.now(),
+        activeTimeMs: message.activeTimeMs || 0,
         updatedAt: Date.now()
       });
     }
@@ -388,19 +399,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const enabled = message.enabled !== false;
     const autoCaptcha = message.autoCaptcha !== false;
     const serverPing = message.serverPing !== false;
+    const showWindowTimer = message.showWindowTimer !== false;
+    const showFloatingBadge = message.showFloatingBadge !== false;
     const githubRepo = (message.githubRepo || DEFAULT_REPO).trim();
 
-    chrome.storage.local.set({ enabled, interval, autoCaptcha, serverPing, githubRepo }).then(async () => {
+    chrome.storage.local.set({ enabled, interval, autoCaptcha, serverPing, showWindowTimer, showFloatingBadge, githubRepo }).then(async () => {
       await applyEnabledState();
       await addLog({
         ok: true,
         source: "User",
-        message: `Settings updated: KeepAlive=${enabled ? "ON" : "OFF"}, Interval=${interval}m, Repo=${githubRepo}`
+        message: `Settings updated: KeepAlive=${enabled ? "ON" : "OFF"}, Interval=${interval}m, Timer=${showWindowTimer ? "ON" : "OFF"}`
       });
 
       const tabs = await chrome.tabs.query({ url: MATCH_PATTERNS });
       for (const t of tabs) {
-        if (t.id) chrome.tabs.sendMessage(t.id, { type: "applyCaptchaSetting", autoCaptcha }).catch(() => {});
+        if (t.id) {
+          chrome.tabs.sendMessage(t.id, {
+            type: "applySettings",
+            autoCaptcha,
+            showWindowTimer,
+            showFloatingBadge
+          }).catch(() => {});
+        }
       }
 
       sendResponse({ ok: true });
@@ -492,6 +512,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           discarded: !!t.discarded,
           visible: s ? s.visible : null,
           focused: s ? s.focused : null,
+          isFocused: s ? s.isFocused : !!t.active,
+          sessionStartTime: s?.sessionStartTime || null,
+          activeTimeMs: s?.activeTimeMs || 0,
           pageType: s ? s.pageType : (isCrm ? "crm_portal" : "portal")
         };
       });

@@ -73,6 +73,14 @@
   <label><input id="serverPing" type="checkbox"> <b>Session Keep-Alive</b> (Sends lightweight server heartbeat)</label>
 </div>
 
+<div class="field">
+  <label><input id="showWindowTimer" type="checkbox"> <b>Show Active Window Timer</b> (Measures actual focused time in window)</label>
+</div>
+
+<div class="field">
+  <label><input id="showFloatingBadge" type="checkbox"> <b>On-Page Floating Timer Pill</b> (Minimal badge in bottom-right corner)</label>
+</div>
+
 <div class="field" style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 20px;">
   <label><b>GitHub Repository (Updates):</b><br>
     <input id="githubRepo" type="text" placeholder="owner/repository" value="Hackers-lab/eoffice_extension">
@@ -98,6 +106,8 @@
   document.getElementById("interval").value = String(res.settings.interval || 3);
   document.getElementById("autoCaptcha").checked = res.settings.autoCaptcha !== false;
   document.getElementById("serverPing").checked = res.settings.serverPing !== false;
+  document.getElementById("showWindowTimer").checked = res.settings.showWindowTimer !== false;
+  document.getElementById("showFloatingBadge").checked = res.settings.showFloatingBadge !== false;
   document.getElementById("githubRepo").value = res.settings.githubRepo || "Hackers-lab/eoffice_extension";
 })();
 
@@ -108,6 +118,8 @@ document.getElementById("save").onclick = async () => {
     interval: Number(document.getElementById("interval").value),
     autoCaptcha: document.getElementById("autoCaptcha").checked,
     serverPing: document.getElementById("serverPing").checked,
+    showWindowTimer: document.getElementById("showWindowTimer").checked,
+    showFloatingBadge: document.getElementById("showFloatingBadge").checked,
     githubRepo: document.getElementById("githubRepo").value.trim()
   });
   const s = document.getElementById("status");

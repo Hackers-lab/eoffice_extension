@@ -196,14 +196,14 @@
     <img src="icon-32.png" width="20" height="20" alt="eOfficeGate" style="border-radius: 4px;">
     <h3>eOfficeGate</h3>
   </div>
-  <span id="versionBadge" class="badge">v1.4</span>
+  <span id="versionBadge" class="badge">v1.5</span>
 </div>
 <p class="subtitle">Auto-fills CAPTCHA & keeps eOffice & CRM sessions alive.</p>
 
 <!-- Update Banner -->
 <div id="updateBanner" class="update-banner" style="display: none;">
   <div class="update-header">
-    <span class="update-title">🚀 Update Available: <b id="updateVersionBadge">v1.4.0</b></span>
+    <span class="update-title">🚀 Update Available: <b id="updateVersionBadge">v1.5.0</b></span>
   </div>
   <div class="update-actions">
     <button id="btn1ClickUpdate" class="btn-update-now">1-Click Update</button>
@@ -220,6 +220,12 @@
   <div class="row">
     <label><input id="serverPing" type="checkbox"> Session Keep-Alive (eOffice & CRM)</label>
   </div>
+  <div class="row">
+    <label><input id="showWindowTimer" type="checkbox"> Show Window Active Timer</label>
+  </div>
+  <div class="row">
+    <label><input id="showFloatingBadge" type="checkbox"> On-Page Floating Timer Pill</label>
+  </div>
   <div class="row" style="margin-top: 6px; border-top: 1px dashed #e2e8f0; padding-top: 5px;">
     <span>Heartbeat Interval</span>
     <select id="interval">
@@ -230,6 +236,22 @@
       <option value="15">15 minutes</option>
       <option value="30">30 minutes</option>
     </select>
+  </div>
+</div>
+
+<!-- Active Window Timer Card -->
+<div id="timerCard" class="card" style="display: none; background: #f0fdf4; border-color: #bbf7d0;">
+  <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; color: #166534; margin-bottom: 4px;">
+    <span>⏱️ Window Active Time</span>
+    <span id="activeFocusBadge" class="badge" style="background: #22c55e; color: #fff; font-size: 9px; padding: 1px 6px;">FOCUSED</span>
+  </div>
+  <div style="display: flex; align-items: baseline; gap: 8px; margin: 2px 0;">
+    <span id="activeTimerDigits" style="font-size: 24px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #14532d; letter-spacing: 0.5px;">00:00:00</span>
+    <span style="font-size: 10px; color: #15803d; font-weight: 500;">(focused active)</span>
+  </div>
+  <div style="display: flex; justify-content: space-between; font-size: 10px; color: #166534; margin-top: 5px; border-top: 1px dashed #bbf7d0; padding-top: 4px;">
+    <span>Tab Open: <b id="timerSessionDuration">0m</b></span>
+    <span>Session Started: <b id="timerSessionStart">--:--</b></span>
   </div>
 </div>
 

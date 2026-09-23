@@ -17,6 +17,19 @@ async function getStatus() {
   return chrome.runtime.sendMessage({ type: "getStatus" });
 }
 
+function formatHms(ms) {
+  if (!ms || ms < 0) return "00:00:00";
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+let currentActiveTimeMs = 0;
+let isCurrentTabFocused = false;
+
 function renderLogs(logs) {
   const container = document.getElementById("logsContainer");
   const title = document.getElementById("logsTitle");
@@ -90,6 +103,8 @@ async function refreshStatus() {
   document.getElementById("interval").value = String(settings.interval);
   document.getElementById("autoCaptcha").checked = settings.autoCaptcha !== false;
   document.getElementById("serverPing").checked = settings.serverPing !== false;
+  document.getElementById("showWindowTimer").checked = settings.showWindowTimer !== false;
+  document.getElementById("showFloatingBadge").checked = settings.showFloatingBadge !== false;
 
   const btn = document.getElementById("toggle");
   btn.textContent = settings.enabled ? "Stop Keep-Alive" : "Start Keep-Alive";
@@ -97,12 +112,14 @@ async function refreshStatus() {
 
   const statusEl = document.getElementById("status");
   const testPingBtn = document.getElementById("testPing");
+  const timerCard = document.getElementById("timerCard");
 
   renderLogs(logs);
   renderUpdateBanner(updateInfo);
 
   if (!tabs || tabs.length === 0) {
     testPingBtn.disabled = true;
+    timerCard.style.display = "none";
     statusEl.innerHTML = `
       <div class="status-line">
         <span class="dot warn"></span>
@@ -125,6 +142,38 @@ async function refreshStatus() {
     pageKind = activeTab.pageType === "crm_login" ? "CRM Login" : "CRM Portal";
   } else {
     pageKind = activeTab.pageType === "login" ? "eOffice Login" : "eFile Portal";
+  }
+
+  // Render Active Window Timer
+  if (settings.showWindowTimer !== false) {
+    timerCard.style.display = "block";
+    currentActiveTimeMs = activeTab.activeTimeMs || 0;
+    isCurrentTabFocused = !!activeTab.isFocused;
+
+    document.getElementById("activeTimerDigits").textContent = formatHms(currentActiveTimeMs);
+    const focusBadge = document.getElementById("activeFocusBadge");
+    if (activeTab.isFocused) {
+      focusBadge.textContent = "FOCUSED";
+      focusBadge.style.background = "#22c55e";
+      focusBadge.style.color = "#fff";
+    } else {
+      focusBadge.textContent = "BACKGROUND";
+      focusBadge.style.background = "#fef3c7";
+      focusBadge.style.color = "#92400e";
+    }
+
+    const durEl = document.getElementById("timerSessionDuration");
+    const startEl = document.getElementById("timerSessionStart");
+    if (activeTab.sessionStartTime) {
+      const d = new Date(activeTab.sessionStartTime);
+      startEl.textContent = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      durEl.textContent = fmtAgo(activeTab.sessionStartTime).replace(" ago", "");
+    } else {
+      startEl.textContent = "--:--";
+      durEl.textContent = "0m";
+    }
+  } else {
+    timerCard.style.display = "none";
   }
 
   let pingInfo = "No heartbeat sent yet.";
@@ -169,13 +218,17 @@ async function saveCurrentControls(overrideEnabled) {
   const interval = Number(document.getElementById("interval").value);
   const autoCaptcha = document.getElementById("autoCaptcha").checked;
   const serverPing = document.getElementById("serverPing").checked;
+  const showWindowTimer = document.getElementById("showWindowTimer").checked;
+  const showFloatingBadge = document.getElementById("showFloatingBadge").checked;
 
   await chrome.runtime.sendMessage({
     type: "setSettings",
     enabled,
     interval,
     autoCaptcha,
-    serverPing
+    serverPing,
+    showWindowTimer,
+    showFloatingBadge
   });
   await refreshStatus();
 }
@@ -188,6 +241,8 @@ document.getElementById("toggle").addEventListener("click", async () => {
 document.getElementById("interval").addEventListener("change", () => saveCurrentControls());
 document.getElementById("autoCaptcha").addEventListener("change", () => saveCurrentControls());
 document.getElementById("serverPing").addEventListener("change", () => saveCurrentControls());
+document.getElementById("showWindowTimer").addEventListener("change", () => saveCurrentControls());
+document.getElementById("showFloatingBadge").addEventListener("change", () => saveCurrentControls());
 
 document.getElementById("clearLogs").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "clearLogs" });
@@ -329,4 +384,15 @@ document.getElementById("testPing").addEventListener("click", async () => {
 
 refreshStatus();
 const pollTimer = setInterval(refreshStatus, 3000);
-window.addEventListener("unload", () => clearInterval(pollTimer));
+const activeTicker = setInterval(() => {
+  if (isCurrentTabFocused && currentActiveTimeMs > 0) {
+    currentActiveTimeMs += 1000;
+    const digitsEl = document.getElementById("activeTimerDigits");
+    if (digitsEl) digitsEl.textContent = formatHms(currentActiveTimeMs);
+  }
+}, 1000);
+
+window.addEventListener("unload", () => {
+  clearInterval(pollTimer);
+  clearInterval(activeTicker);
+});
